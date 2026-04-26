@@ -1,10 +1,12 @@
 """Tests for the TaskStore storage layer."""
 
 import pytest
+import pytest_asyncio
+
 from hub.store import TaskStore
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def store(temp_db_path):
     s = TaskStore(str(temp_db_path))
     await s.connect()
