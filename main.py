@@ -33,12 +33,17 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
 
 app = Starlette(
     routes=[
-        Mount("/sse", app=mcp.sse_app()),
         *[Route(r.path, r.endpoint) for r in http_routes],
+        Mount("/", app=mcp.sse_app()),
     ],
     lifespan=lifespan,
 )
+# IMPORTANT: mcp.sse_app() is mounted at "/" not "/sse".
+# It registers its own /sse and /messages/ routes internally.
+# Mounting at "/sse" doubles the path to /sse/sse — causing 404s.
+# HTTP routes are listed first so they take precedence.
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=HOST, port=PORT, log_level="info", reload=False)
+    uvicorn.run("main:app", host=HOST, port=PORT,
+                log_level="info", reload=False)
