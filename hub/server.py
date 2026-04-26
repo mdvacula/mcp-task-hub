@@ -1,7 +1,6 @@
 """
 MCP Task Hub — tool definitions and HTTP health endpoints.
 """
-
 from __future__ import annotations
 
 import logging
@@ -20,19 +19,18 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-HOST = os.getenv("HUB_HOST", "0.0.0.0")
-PORT = int(os.getenv("HUB_PORT", "8000"))
-DB_PATH = os.getenv("HUB_DB_PATH", "/data/hub.db")
+HOST      = os.getenv("HUB_HOST",      "0.0.0.0")
+PORT      = int(os.getenv("HUB_PORT",  "8000"))
+DB_PATH   = os.getenv("HUB_DB_PATH",   "/data/hub.db")
 LOG_LEVEL = os.getenv("HUB_LOG_LEVEL", "INFO")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 
 store = TaskStore(DB_PATH)
-mcp = FastMCP("task-hub")
+mcp   = FastMCP("task-hub")
 
 
 # ── MCP Tools ────────────────────────────────────────────────────────────────
-
 
 @mcp.tool()
 async def sync_task(
@@ -52,7 +50,8 @@ async def sync_task(
         metadata: Keys: change, specRef, priority, type,
                   blockedBy, blocks, entireSessionId, notes
     """
-    return await store.sync_task(id=id, title=title, status=status, metadata=metadata)
+    return await store.sync_task(id=id, title=title,
+                                 status=status, metadata=metadata)
 
 
 @mcp.tool()
@@ -87,7 +86,6 @@ async def update_task_status(id: str, status: str) -> dict:
 
 # ── HTTP read endpoints ───────────────────────────────────────────────────────
 
-
 async def health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "task_count": await store.task_count()})
 
@@ -98,15 +96,11 @@ async def list_tasks(request: Request) -> JSONResponse:
 
 async def get_task_endpoint(request: Request) -> Response:
     task = await store.get_task(request.path_params["task_id"])
-    return (
-        JSONResponse(task)
-        if task
-        else JSONResponse({"error": "not found"}, status_code=404)
-    )
+    return JSONResponse(task) if task else JSONResponse({"error": "not found"}, status_code=404)
 
 
 http_routes = [
-    Route("/health", health),
-    Route("/tasks", list_tasks),
-    Route("/tasks/{task_id:str}", get_task_endpoint),
+    Route("/health",                 health),
+    Route("/tasks",                  list_tasks),
+    Route("/tasks/{task_id:str}",    get_task_endpoint),
 ]
