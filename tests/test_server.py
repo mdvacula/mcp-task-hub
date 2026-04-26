@@ -20,7 +20,6 @@ def test_app(temp_db_path):
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         await _store.connect()
-        # Seed one task for route tests
         await _store.sync_task(
             id="task-1",
             title="Task 1",
@@ -35,7 +34,7 @@ def test_app(temp_db_path):
             await _store.close()
 
     return Starlette(
-        routes=[*server.http_routes, Mount("/sse", app=server.mcp.sse_app())],
+        routes=[*server.http_routes, Mount("/", app=server.mcp.sse_app())],
         lifespan=lifespan,
     )
 
@@ -56,7 +55,7 @@ def test_app_empty(temp_db_path):
             await _store.close()
 
     return Starlette(
-        routes=[*server.http_routes, Mount("/sse", app=server.mcp.sse_app())],
+        routes=[*server.http_routes, Mount("/", app=server.mcp.sse_app())],
         lifespan=lifespan,
     )
 
