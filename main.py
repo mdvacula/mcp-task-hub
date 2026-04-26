@@ -14,9 +14,9 @@ from typing import AsyncIterator
 
 import uvicorn
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 
-from hub import http_routes, store, HOST, PORT
+from hub import http_routes, store, HOST, PORT, mcp
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,12 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
 
 
 app = Starlette(
-    routes=[Route(r.path, r.endpoint) for r in http_routes],
+    routes=[
+        # Plain HTTP read endpoints
+        *[Route(r.path, r.endpoint) for r in http_routes],
+        # Real MCP SSE transport at /sse (required by OpenCode)
+        Mount("/", mcp.sse_app()),
+    ],
     lifespan=lifespan,
 )
 
