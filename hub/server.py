@@ -14,6 +14,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+# We attach a real MCP SSE transport ASGI app at `/sse` in `main.py`.
+# This file defines MCP tools and HTTP read endpoints only.
+
 from .store import TaskStore
 
 load_dotenv()
@@ -27,6 +30,8 @@ LOG_LEVEL = os.getenv("HUB_LOG_LEVEL", "INFO")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 
+# Module-level store is used by MCP tools.
+# HTTP tests replace it with a temp store instance.
 store = TaskStore(DB_PATH)
 mcp = FastMCP("task-hub")
 
