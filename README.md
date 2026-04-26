@@ -13,20 +13,33 @@ docker compose up -d
 ```
 
 Hub is now running:
-- **SSE (MCP):**   `http://localhost:8000/sse`
-- **Health:**      `http://localhost:8000/health`
-- **Tasks (GET):** `http://localhost:8000/tasks`
+- **SSE (MCP):**  `http://localhost:8000/sse`
+- **Health:**     `http://localhost:8000/health`
+- **Tasks (GET):**`http://localhost:8000/tasks`
 
 ## Connect a Project
 
-Add to `opencode.json` in any project:
+Add to `.cursor/mcp.json` in any project:
+
+```json
+{
+  "mcpServers": {
+    "task-hub": {
+      "url": "http://localhost:8000/sse",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+For OpenCode, use the same server URL in `opencode.json` with `type: "sse"`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "task-hub": {
-      "type": "remote",
+      "type": "sse",
       "url": "http://localhost:8000/sse",
       "enabled": true
     }
