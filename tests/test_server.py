@@ -6,15 +6,17 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import pytest
-import hub.server as server
-from hub.store import TaskStore
+import pytest_asyncio
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from starlette.testclient import TestClient
 
+import hub.server as server
+from hub.store import TaskStore
 
-@pytest.fixture
-def test_app(temp_db_path):
+
+@pytest_asyncio.fixture
+async def test_app(temp_db_path):
     _store = TaskStore(str(temp_db_path))
 
     @asynccontextmanager
@@ -34,14 +36,15 @@ def test_app(temp_db_path):
             server.store = old
             await _store.close()
 
+    # NOTE: mount at "/" because mcp.sse_app() serves its routes under /sse.
     return Starlette(
-        routes=[*server.http_routes, Mount("/sse", app=server.mcp.sse_app())],
+        routes=[*server.http_routes, Mount("/", app=server.mcp.sse_app())],
         lifespan=lifespan,
     )
 
 
-@pytest.fixture
-def test_app_empty(temp_db_path):
+@pytest_asyncio.fixture
+async def test_app_empty(temp_db_path):
     _store = TaskStore(str(temp_db_path))
 
     @asynccontextmanager
@@ -56,7 +59,7 @@ def test_app_empty(temp_db_path):
             await _store.close()
 
     return Starlette(
-        routes=[*server.http_routes, Mount("/sse", app=server.mcp.sse_app())],
+        routes=[*server.http_routes, Mount("/", app=server.mcp.sse_app())],
         lifespan=lifespan,
     )
 
