@@ -2,7 +2,6 @@
 SQLite storage layer for the MCP Task Hub.
 All reads and writes go through TaskStore.
 """
-
 from __future__ import annotations
 
 import json
@@ -66,7 +65,9 @@ class TaskStore:
         metadata: dict[str, Any] | None = None,
     ) -> dict:
         now = _now()
-        async with self._db.execute("SELECT * FROM tasks WHERE id = ?", (id,)) as cur:
+        async with self._db.execute(
+            "SELECT * FROM tasks WHERE id = ?", (id,)
+        ) as cur:
             existing = await cur.fetchone()
 
         if existing is None:
@@ -81,13 +82,8 @@ class TaskStore:
             merged = {**ex["metadata"], **(metadata or {})}
             await self._db.execute(
                 "UPDATE tasks SET title=?,status=?,metadata=?,updated_at=? WHERE id=?",
-                (
-                    title,
-                    status if status is not None else ex["status"],
-                    json.dumps(merged),
-                    now,
-                    id,
-                ),
+                (title, status if status is not None else ex["status"],
+                 json.dumps(merged), now, id),
             )
             log.info("Updated task %s", id)
 
@@ -102,11 +98,9 @@ class TaskStore:
     ) -> list[dict]:
         q, p = "SELECT * FROM tasks WHERE 1=1", []
         if id:
-            q += " AND id=?"
-            p.append(id)
+            q += " AND id=?"; p.append(id)
         if status:
-            q += " AND status=?"
-            p.append(status)
+            q += " AND status=?"; p.append(status)
         async with self._db.execute(q, p) as cur:
             rows = await cur.fetchall()
         tasks = [self._row(r) for r in rows]
@@ -116,7 +110,9 @@ class TaskStore:
         return tasks
 
     async def update_task_status(self, id: str, status: str) -> dict:
-        async with self._db.execute("SELECT id FROM tasks WHERE id=?", (id,)) as cur:
+        async with self._db.execute(
+            "SELECT id FROM tasks WHERE id=?", (id,)
+        ) as cur:
             if not await cur.fetchone():
                 raise ValueError(f"Task not found: {id}")
         await self._db.execute(
@@ -128,7 +124,9 @@ class TaskStore:
         return await self.get_task(id)
 
     async def get_task(self, id: str) -> dict | None:
-        async with self._db.execute("SELECT * FROM tasks WHERE id=?", (id,)) as cur:
+        async with self._db.execute(
+            "SELECT * FROM tasks WHERE id=?", (id,)
+        ) as cur:
             row = await cur.fetchone()
         return self._row(row) if row else None
 
