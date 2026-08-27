@@ -5,3 +5,8 @@ __pycache__
 *.pyo
 hub.db
 .venv
+ui/node_modules
+ui/dist
+.pytest_cache
+tests
+data

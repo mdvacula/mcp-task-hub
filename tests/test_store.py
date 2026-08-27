@@ -83,3 +83,77 @@ async def test_task_count(store):
 async def test_fetch_returns_empty_on_no_match(store):
     result = await store.fetch_tasks(status="pending")
     assert result == []
+
+
+async def test_filter_by_project(store):
+    await store.sync_task(id="a", title="A", project="proj-a")
+    await store.sync_task(id="b", title="B", project="proj-b")
+    await store.sync_task(id="c", title="C")  # no project
+    result = await store.fetch_tasks(project="proj-a")
+    assert [t["id"] for t in result] == ["a"]
+    assert len(await store.fetch_tasks()) == 3
+
+
+async def test_project_preserved_on_update_without_project(store):
+    await store.sync_task(id="a", title="A", project="proj-a")
+    updated = await store.sync_task(id="a", title="A2")
+    assert updated["project"] == "proj-a"
+    assert updated["title"] == "A2"
+
+
+async def test_blocked_requires_notes(store):
+    await store.sync_task(id="a", title="A")
+    with pytest.raises(ValueError, match="requires notes"):
+        await store.update_task_status(id="a", status="blocked")
+
+
+async def test_blocked_with_notes_appends_status_notes(store):
+    await store.sync_task(id="a", title="A")
+    updated = await store.update_task_status(
+        id="a", status="blocked", notes="missing API key"
+    )
+    assert updated["status"] == "blocked"
+    notes = updated["metadata"]["statusNotes"]
+    assert len(notes) == 1
+    assert notes[0]["note"] == "missing API key"
+    assert notes[0]["status"] == "blocked"
+    # a second transition appends rather than overwrites
+    updated = await store.update_task_status(id="a", status="pending", notes="unblocked")
+    assert len(updated["metadata"]["statusNotes"]) == 2
+
+
+async def test_invalid_status_rejected(store):
+    await store.sync_task(id="a", title="A")
+    with pytest.raises(ValueError, match="Invalid status"):
+        await store.update_task_status(id="a", status="done")
+    with pytest.raises(ValueError, match="Invalid status"):
+        await store.sync_task(id="b", title="B", status="wip")
+
+
+async def test_migration_adds_project_column(temp_db_path):
+    import aiosqlite
+
+    # build a pre-project database by hand
+    db = await aiosqlite.connect(str(temp_db_path))
+    await db.executescript(
+        """
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        INSERT INTO tasks VALUES ('old-1','Old','pending','{}','2026-01-01','2026-01-01');
+        """
+    )
+    await db.commit()
+    await db.close()
+
+    s = TaskStore(str(temp_db_path))
+    await s.connect()
+    try:
+        task = await s.get_task("old-1")
+        assert task["project"] is None
+        migrated = await s.sync_task(id="old-1", title="Old", project="proj-a")
+        assert migrated["project"] == "proj-a"
+    finally:
+        await s.close()

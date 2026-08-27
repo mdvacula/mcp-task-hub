@@ -1,11 +1,14 @@
 services:
   task-hub:
     build: .
-    container_name: mcp-task-hub
+    container_name: task-hub
+    user: "1000:1000"
     ports:
-      - "${HUB_PORT:-8000}:8000"
+      - "127.0.0.1:8050:8000"
     volumes:
-      - hub-data:/data
+      - ./data:/data
+    environment:
+      - HOME=/tmp
     env_file:
       - .env
     restart: unless-stopped
@@ -16,7 +19,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  hub-data:
-    driver: local

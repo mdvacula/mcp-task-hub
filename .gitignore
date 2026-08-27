@@ -9,3 +9,6 @@ hub.db
 *.egg-info/
 dist/
 build/
+data/
+ui/node_modules/
+ui/dist/

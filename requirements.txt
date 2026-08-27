@@ -1,4 +1,4 @@
-mcp[cli]>=1.0.0
+mcp[cli]>=1.12,<2
 aiosqlite>=0.20.0
 starlette>=0.40.0
 uvicorn>=0.30.0
