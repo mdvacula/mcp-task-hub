@@ -222,7 +222,14 @@ async def ui_file(request: Request) -> Response:
         return JSONResponse({"error": "not found"}, status_code=404)
     if not target.is_file():
         target = index  # SPA fallback
-    return FileResponse(target)
+    # Vite fingerprints everything under assets/, so those can be cached hard;
+    # index.html must be revalidated or phones keep showing a stale bundle.
+    cache = (
+        "public, max-age=31536000, immutable"
+        if target.parent.name == "assets" and target != index
+        else "no-cache"
+    )
+    return FileResponse(target, headers={"Cache-Control": cache})
 
 
 http_routes = [

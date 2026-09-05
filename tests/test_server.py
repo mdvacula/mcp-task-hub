@@ -174,3 +174,31 @@ def test_spec_file_unmounted(test_app, tmp_path, monkeypatch):
         resp = client.get("/spec/proj-a/openspec/changes/c1/tasks.md")
         assert resp.status_code == 404
         assert "not mounted" in resp.json()["error"]
+
+
+# ── /ui cache policy ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def ui_dir(tmp_path, monkeypatch):
+    d = tmp_path / "ui"
+    (d / "assets").mkdir(parents=True)
+    (d / "index.html").write_text("<html>app</html>")
+    (d / "assets" / "index-abc123.js").write_text("console.log(1)")
+    monkeypatch.setattr(server, "UI_DIR", d)
+    return d
+
+
+def test_ui_index_not_cached(test_app, ui_dir):
+    with TestClient(test_app) as client:
+        for path in ("/ui/", "/ui/index.html", "/ui/some/spa/route"):
+            resp = client.get(path)
+            assert resp.status_code == 200
+            assert resp.headers["cache-control"] == "no-cache"
+
+
+def test_ui_assets_immutable(test_app, ui_dir):
+    with TestClient(test_app) as client:
+        resp = client.get("/ui/assets/index-abc123.js")
+        assert resp.status_code == 200
+        assert "immutable" in resp.headers["cache-control"]
