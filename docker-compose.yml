@@ -7,8 +7,12 @@ services:
       - "127.0.0.1:8050:8000"
     volumes:
       - ./data:/data
+      # read-only: lets the UI open the OpenSpec file a task's specRef names
+      # (project == directory name under this root)
+      - ${HUB_REPOS_HOST_DIR:-/home/mdv/code}:/repos:ro
     environment:
       - HOME=/tmp
+      - HUB_REPOS_DIR=/repos
     env_file:
       - .env
     restart: unless-stopped

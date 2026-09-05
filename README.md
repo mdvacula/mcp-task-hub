@@ -31,6 +31,7 @@ The compose file binds **127.0.0.1:8050** (host) → 8000 (container):
 | `http://127.0.0.1:8050/tasks` | All tasks, JSON |
 | `http://127.0.0.1:8050/tasks/{id}` | One task, JSON |
 | `http://127.0.0.1:8050/health` | `{status, task_count}` |
+| `http://127.0.0.1:8050/spec/{project}/{path}` | A project's `openspec/**/*.md` file as `text/markdown` (for the UI's spec viewer) |
 
 Register with Claude Code (user-wide — every project sees it; **sessions
 started before this won't have the tools**, open a new one):
@@ -70,8 +71,23 @@ itself at `/ui/`. Stat tiles (click to filter), project/change/status filters,
 search, detail sheet showing the dependency graph, `statusNotes`, and `runLog`,
 stale-claim highlighting (`in-progress` untouched >2 h), 5-second polling.
 
-Exposing it beyond localhost: proxy **only** `/ui`, `/tasks`, `/health` —
-never `/mcp`. Reference nginx vhost: `taskhub.local` on the omarchy box.
+**Spec viewer.** A task's `metadata.specRef`
+(`openspec/changes/<id>/tasks.md#3-some-section`) is a link: it opens the
+markdown rendered in a wide sheet, scrolled to and highlighting the cited
+section, with buttons to flip between the change's `proposal.md` /
+`design.md` / `tasks.md` and a raw link. The file comes from `/spec/…`, which
+reads `HUB_REPOS_DIR/<project>/<path>` — mount your checkouts root read-only
+(compose does `${HUB_REPOS_HOST_DIR:-/home/mdv/code}:/repos:ro`; `project`
+is the directory name). Only `*.md` under `openspec/` is served; traversal and
+symlink escapes 404. Anchors are resolved fuzzily because planners write them
+by hand: exact GitHub slug, then the bare section number (`#3`), then token
+overlap — the header says which heading a fuzzy anchor matched, or that none
+did. `node ui/scripts/check-spec-anchors.mts` audits every specRef in the
+hub against the real files.
+
+Exposing it beyond localhost: proxy **only** `/ui`, `/tasks`, `/spec`,
+`/health` — never `/mcp`. Reference nginx vhost: `taskhub.local` on the
+omarchy box.
 
 ## Development
 
@@ -80,8 +96,8 @@ never `/mcp`. Reference nginx vhost: `taskhub.local` on the omarchy box.
 PYTHONPATH=. uv run --no-project --with "mcp[cli]>=1.12,<2" --with aiosqlite \
   --with python-dotenv --with pytest --with pytest-asyncio --with httpx pytest -q
 
-# UI dev server (proxies /tasks + /health to a running hub)
-cd ui && pnpm install && pnpm dev
+# UI dev server (proxies /tasks, /health, /spec to a running hub)
+cd ui && pnpm install && pnpm dev          # lockfile is pnpm v9+ (npx pnpm@10 if yours is older)
 
 # rebuild + redeploy after changes
 docker compose up -d --build
@@ -98,4 +114,6 @@ Pinned to `mcp[cli]>=1.12,<2` — SDK v2 renamed FastMCP and dropped
 | `HUB_PORT` | `8000` | Container port (host port is set in compose) |
 | `HUB_DB_PATH` | `/data/hub.db` | SQLite location |
 | `HUB_UI_DIR` | `/app/ui` | Built UI assets |
+| `HUB_REPOS_DIR` | `/repos` | Read-only root of project checkouts for `/spec` (unset/missing → `/spec` 404s) |
+| `HUB_REPOS_HOST_DIR` | `/home/mdv/code` | compose-only: host dir bind-mounted at `/repos` |
 | `HUB_LOG_LEVEL` | `INFO` | Logging |

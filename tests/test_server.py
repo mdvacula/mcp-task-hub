@@ -102,3 +102,54 @@ def test_streamable_http_app_exposes_mcp_and_custom_routes():
     assert any(p and p.startswith("/mcp") for p in paths) or any(
         getattr(r, "path", "") == "" for r in app.routes
     )
+
+
+# ── /spec/{project}/{path} ───────────────────────────────────────────────────
+
+
+@pytest.fixture
+def repos_dir(tmp_path, monkeypatch):
+    root = tmp_path / "repos"
+    spec = root / "proj-a" / "openspec" / "changes" / "c1"
+    spec.mkdir(parents=True)
+    (spec / "tasks.md").write_text("# Tasks\n\n## 1. First thing\n\n- [ ] 1.1 do it\n")
+    (root / "proj-a" / "openspec" / "notes.txt").write_text("not markdown")
+    (root / "proj-a" / "README.md").write_text("outside openspec")
+    (root / "proj-a" / "openspec" / "escape.md").symlink_to(root / "proj-a" / "README.md")
+    (root / "secret.md").write_text("above the project")
+    monkeypatch.setattr(server, "REPOS_DIR", root)
+    return root
+
+
+def test_spec_file_served(test_app, repos_dir):
+    with TestClient(test_app) as client:
+        resp = client.get("/spec/proj-a/openspec/changes/c1/tasks.md")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/markdown")
+        assert "## 1. First thing" in resp.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/spec/proj-a/openspec/changes/c1/missing.md",  # no such file
+        "/spec/proj-a/openspec/notes.txt",  # not markdown
+        "/spec/proj-a/README.md",  # outside openspec/
+        "/spec/proj-a/openspec/escape.md",  # symlink escaping openspec/
+        "/spec/proj-a/openspec/../../secret.md",  # traversal above the project
+        "/spec/proj-a/openspec/%2e%2e/%2e%2e/secret.md",  # encoded traversal
+        "/spec/nope/openspec/changes/c1/tasks.md",  # unknown project
+        "/spec/../openspec/changes/c1/tasks.md",  # project traversal
+    ],
+)
+def test_spec_file_rejects(test_app, repos_dir, path):
+    with TestClient(test_app) as client:
+        assert client.get(path).status_code == 404
+
+
+def test_spec_file_unmounted(test_app, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "REPOS_DIR", tmp_path / "absent")
+    with TestClient(test_app) as client:
+        resp = client.get("/spec/proj-a/openspec/changes/c1/tasks.md")
+        assert resp.status_code == 404
+        assert "not mounted" in resp.json()["error"]

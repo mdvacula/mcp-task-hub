@@ -17,6 +17,7 @@ export default defineConfig({
       // dev-only: talk to a locally running hub
       "/tasks": "http://127.0.0.1:8050",
       "/health": "http://127.0.0.1:8050",
+      "/spec": "http://127.0.0.1:8050",
     },
   },
 })

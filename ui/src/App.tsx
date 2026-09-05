@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Circle,
   CircleDashed,
+  FileText,
   Moon,
   Sun,
 } from "lucide-react"
@@ -36,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Separator } from "@/components/ui/separator"
+import { SpecViewer } from "@/components/SpecViewer"
 import { isStaleClaim, relativeTime, useTasks } from "@/lib/useTasks"
 import type { Task, TaskStatus } from "@/lib/types"
 
@@ -133,6 +135,7 @@ export default function App() {
   const [status, setStatus] = useState(ALL)
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<Task | null>(null)
+  const [specOpen, setSpecOpen] = useState(false)
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains("dark"),
   )
@@ -303,7 +306,15 @@ export default function App() {
         </Table>
       </Card>
 
-      <Sheet open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
+      <Sheet
+        open={selected !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelected(null)
+            setSpecOpen(false)
+          }
+        }}
+      >
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           {selected && (
             <>
@@ -320,7 +331,19 @@ export default function App() {
                 <DetailRow label="Tier">{selected.metadata.tier ?? "—"}</DetailRow>
                 {selected.metadata.specRef && (
                   <DetailRow label="Spec ref">
-                    <span className="font-mono text-xs">{selected.metadata.specRef}</span>
+                    {selected.project ? (
+                      <button
+                        type="button"
+                        onClick={() => setSpecOpen(true)}
+                        title="Open the spec section in the viewer"
+                        className="inline-flex max-w-full items-start gap-1 text-left font-mono text-xs underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground"
+                      >
+                        <span className="break-all">{selected.metadata.specRef}</span>
+                        <FileText className="mt-0.5 size-3 shrink-0" aria-hidden />
+                      </button>
+                    ) : (
+                      <span className="font-mono text-xs">{selected.metadata.specRef}</span>
+                    )}
                   </DetailRow>
                 )}
                 {(selected.metadata.blockedBy?.length ?? 0) > 0 && (
@@ -376,6 +399,16 @@ export default function App() {
           )}
         </SheetContent>
       </Sheet>
+
+      {selected?.project && selected.metadata.specRef && (
+        <SpecViewer
+          key={selected.id}
+          project={selected.project}
+          specRef={selected.metadata.specRef}
+          open={specOpen}
+          onOpenChange={setSpecOpen}
+        />
+      )}
     </div>
   )
 }

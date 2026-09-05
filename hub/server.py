@@ -2,7 +2,7 @@
 MCP Task Hub — tool definitions, HTTP read endpoints, and the task viewer UI.
 
 Transport is streamable HTTP (the SSE transport is deprecated). The MCP
-endpoint lives at /mcp; /health, /tasks, /tasks/{id} and /ui/* are plain
+endpoint lives at /mcp; /health, /tasks, /tasks/{id}, /spec/* and /ui/* are plain
 HTTP custom routes on the same app. The store connects lazily on first use,
 so no lifespan wiring is needed in stateless mode.
 """
@@ -31,6 +31,9 @@ PORT = int(os.getenv("HUB_PORT", "8000"))
 DB_PATH = os.getenv("HUB_DB_PATH", "/data/hub.db")
 LOG_LEVEL = os.getenv("HUB_LOG_LEVEL", "INFO")
 UI_DIR = Path(os.getenv("HUB_UI_DIR", "/app/ui"))
+# Read-only root holding one checkout per project (project = dir name), so the
+# UI can open the OpenSpec file a task's specRef points at. Mount it ro.
+REPOS_DIR = Path(os.getenv("HUB_REPOS_DIR", "/repos"))
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 
@@ -127,6 +130,35 @@ async def get_task_endpoint(request: Request) -> Response:
     )
 
 
+# ── Spec files (read-only, for the UI's specRef viewer) ──────────────────────
+
+
+async def spec_file(request: Request) -> Response:
+    """GET /spec/{project}/{path} → the markdown file at <REPOS_DIR>/<project>/<path>.
+
+    Serves only `*.md` files under the project's `openspec/` tree; anything else
+    (traversal, symlink escapes, other files) is a 404. Fragments in a specRef
+    (`tasks.md#3-foo`) are the UI's business — they never reach the server.
+    """
+    project = request.path_params["project"]
+    rel = request.path_params["path"]
+    if not REPOS_DIR.is_dir():
+        return JSONResponse({"error": "repos dir not mounted"}, status_code=404)
+    if not project or project.startswith(".") or not rel.endswith(".md"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    root = (REPOS_DIR / project).resolve()
+    target = (root / rel).resolve()
+    if not root.is_dir() or root not in target.parents:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if target.relative_to(root).parts[0] != "openspec" or not target.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return Response(
+        target.read_text(encoding="utf-8", errors="replace"),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 # ── Task viewer UI (static SPA build, served from UI_DIR) ────────────────────
 
 
@@ -151,6 +183,7 @@ http_routes = [
     Route("/health", health),
     Route("/tasks", list_tasks),
     Route("/tasks/{task_id:str}", get_task_endpoint),
+    Route("/spec/{project:str}/{path:path}", spec_file),
     Route("/ui", ui_root),
     Route("/ui/{path:path}", ui_file),
 ]
