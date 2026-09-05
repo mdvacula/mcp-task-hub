@@ -31,6 +31,7 @@ The compose file binds **127.0.0.1:8050** (host) → 8000 (container):
 | `http://127.0.0.1:8050/tasks` | All tasks, JSON |
 | `http://127.0.0.1:8050/tasks/{id}` | One task, JSON |
 | `http://127.0.0.1:8050/health` | `{status, task_count}` |
+| `http://127.0.0.1:8050/specs` | Every `openspec/changes/<id>/` dir across the mounted projects (files + mtimes; `archive/` skipped) |
 | `http://127.0.0.1:8050/spec/{project}/{path}` | A project's `openspec/**/*.md` file as `text/markdown` (for the UI's spec viewer) |
 
 Register with Claude Code (user-wide — every project sees it; **sessions
@@ -85,8 +86,18 @@ overlap — the header says which heading a fuzzy anchor matched, or that none
 did. `node ui/scripts/check-spec-anchors.mts` audits every specRef in the
 hub against the real files.
 
-Exposing it beyond localhost: proxy **only** `/ui`, `/tasks`, `/spec`,
-`/health` — never `/mcp`. Reference nginx vhost: `taskhub.local` on the
+**Specs screen** (`/ui/#specs`, the Tasks/Specs switch in the header). Lists
+every change directory found under the mounted repos with its artifacts
+(proposal / design / tasks chips open that file), the newest file's age, and
+what the hub knows about it: **Pending review** when no hub task carries that
+`metadata.change` — i.e. the ★ human gate between `/hub-spec` and
+`/hub-plan` — otherwise a done/running/blocked tally. The "Pending review"
+toggle narrows to those. Note the signal is "not queued in the hub", so
+pre-hub or abandoned changes show as pending too; archive them or filter by
+project.
+
+Exposing it beyond localhost: proxy **only** `/ui`, `/tasks`, `/specs`,
+`/spec`, `/health` — never `/mcp`. Reference nginx vhost: `taskhub.local` on the
 omarchy box.
 
 ## Development
@@ -96,7 +107,7 @@ omarchy box.
 PYTHONPATH=. uv run --no-project --with "mcp[cli]>=1.12,<2" --with aiosqlite \
   --with python-dotenv --with pytest --with pytest-asyncio --with httpx pytest -q
 
-# UI dev server (proxies /tasks, /health, /spec to a running hub)
+# UI dev server (proxies /tasks, /health, /specs, /spec to a running hub)
 cd ui && pnpm install && pnpm dev          # lockfile is pnpm v9+ (npx pnpm@10 if yours is older)
 
 # rebuild + redeploy after changes

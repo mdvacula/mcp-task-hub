@@ -2,7 +2,7 @@
 MCP Task Hub — tool definitions, HTTP read endpoints, and the task viewer UI.
 
 Transport is streamable HTTP (the SSE transport is deprecated). The MCP
-endpoint lives at /mcp; /health, /tasks, /tasks/{id}, /spec/* and /ui/* are plain
+endpoint lives at /mcp; /health, /tasks, /tasks/{id}, /specs, /spec/* and /ui/* are plain
 HTTP custom routes on the same app. The store connects lazily on first use,
 so no lifespan wiring is needed in stateless mode.
 """
@@ -159,6 +159,52 @@ async def spec_file(request: Request) -> Response:
     )
 
 
+CHANGE_FILES = ("proposal.md", "design.md", "tasks.md")
+
+
+async def list_specs(request: Request) -> JSONResponse:
+    """GET /specs → every OpenSpec change dir across the mounted projects.
+
+    [{project, change, files: [{name, size, mtime}], updated}] newest first.
+    `openspec/changes/archive/` is skipped. Whether a change is queued in the
+    hub is the UI's join (metadata.change), not the server's.
+    """
+    out: list[dict[str, Any]] = []
+    if not REPOS_DIR.is_dir():
+        return JSONResponse(out)
+    for proj in sorted(REPOS_DIR.iterdir()):
+        changes = proj / "openspec" / "changes"
+        if proj.name.startswith(".") or not changes.is_dir():
+            continue
+        for ch in sorted(changes.iterdir()):
+            if ch.name in ("archive",) or ch.name.startswith(".") or not ch.is_dir():
+                continue
+            files = []
+            for f in sorted(ch.rglob("*.md")):
+                if not f.is_file():
+                    continue
+                st = f.stat()
+                files.append(
+                    {
+                        "name": str(f.relative_to(ch)),
+                        "size": st.st_size,
+                        "mtime": st.st_mtime,
+                    }
+                )
+            if not files:
+                continue
+            out.append(
+                {
+                    "project": proj.name,
+                    "change": ch.name,
+                    "files": files,
+                    "updated": max(f["mtime"] for f in files),
+                }
+            )
+    out.sort(key=lambda c: c["updated"], reverse=True)
+    return JSONResponse(out)
+
+
 # ── Task viewer UI (static SPA build, served from UI_DIR) ────────────────────
 
 
@@ -183,6 +229,7 @@ http_routes = [
     Route("/health", health),
     Route("/tasks", list_tasks),
     Route("/tasks/{task_id:str}", get_task_endpoint),
+    Route("/specs", list_specs),
     Route("/spec/{project:str}/{path:path}", spec_file),
     Route("/ui", ui_root),
     Route("/ui/{path:path}", ui_file),

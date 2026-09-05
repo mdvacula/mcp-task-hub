@@ -48,3 +48,17 @@ export interface Health {
   status: string
   task_count: number
 }
+
+export interface SpecFile {
+  name: string
+  size: number
+  mtime: number // epoch seconds
+}
+
+/** One openspec/changes/<change>/ directory on disk (from GET /specs). */
+export interface SpecChange {
+  project: string
+  change: string
+  files: SpecFile[]
+  updated: number // epoch seconds, newest file
+}

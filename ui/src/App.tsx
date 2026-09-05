@@ -38,10 +38,18 @@ import {
 } from "@/components/ui/table"
 import { Separator } from "@/components/ui/separator"
 import { SpecViewer } from "@/components/SpecViewer"
+import { SpecsView } from "@/components/SpecsView"
+import { hubSummary } from "@/lib/hubSummary"
+import { useSpecs } from "@/lib/useSpecs"
 import { isStaleClaim, relativeTime, useTasks } from "@/lib/useTasks"
 import type { Task, TaskStatus } from "@/lib/types"
 
-const STATUSES: TaskStatus[] = ["pending", "in-progress", "blocked", "completed"]
+const STATUSES: TaskStatus[] = [
+  "pending",
+  "in-progress",
+  "blocked",
+  "completed",
+]
 
 const STATUS_META: Record<
   TaskStatus,
@@ -73,6 +81,10 @@ const STATUS_META: Record<
 }
 
 const ALL = "__all__"
+
+type View = "tasks" | "specs"
+const viewFromHash = (): View =>
+  location.hash === "#specs" ? "specs" : "tasks"
 
 function StatusBadge({ status }: { status: TaskStatus }) {
   const meta = STATUS_META[status] ?? STATUS_META.pending
@@ -119,7 +131,13 @@ function StatTile({
   )
 }
 
-function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
   return (
     <div className="grid grid-cols-[7rem_1fr] gap-2 text-sm">
       <div className="text-muted-foreground">{label}</div>
@@ -136,6 +154,21 @@ export default function App() {
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<Task | null>(null)
   const [specOpen, setSpecOpen] = useState(false)
+  const [view, setView] = useState<View>(viewFromHash)
+  const { specs, error: specsError } = useSpecs(true)
+  // A spec opened from the Specs screen (no task, no anchor).
+  const [openSpec, setOpenSpec] = useState<{
+    project: string
+    path: string
+  } | null>(null)
+
+  function switchView(v: View) {
+    setView(v)
+    location.hash = v === "specs" ? "#specs" : ""
+  }
+  const pendingReview = specs.filter(
+    (s) => hubSummary(tasks, s.project, s.change) === null,
+  ).length
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains("dark"),
   )
@@ -150,8 +183,15 @@ export default function App() {
     [tasks],
   )
   const changes = useMemo(() => {
-    const scoped = project === ALL ? tasks : tasks.filter((t) => (t.project ?? "—") === project)
-    return [...new Set(scoped.map((t) => t.metadata.change).filter(Boolean) as string[])].sort()
+    const scoped =
+      project === ALL
+        ? tasks
+        : tasks.filter((t) => (t.project ?? "—") === project)
+    return [
+      ...new Set(
+        scoped.map((t) => t.metadata.change).filter(Boolean) as string[],
+      ),
+    ].sort()
   }, [tasks, project])
 
   const filtered = useMemo(() => {
@@ -185,7 +225,9 @@ export default function App() {
             {health ? (
               <>
                 hub ok · {health.task_count} tasks
-                {lastFetched && <> · updated {relativeTime(lastFetched.toISOString())}</>}
+                {lastFetched && (
+                  <> · updated {relativeTime(lastFetched.toISOString())}</>
+                )}
               </>
             ) : (
               "connecting…"
@@ -193,118 +235,194 @@ export default function App() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <nav
+            className="flex items-center rounded-md border p-0.5"
+            aria-label="View"
+          >
+            <Button
+              variant={view === "tasks" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7"
+              onClick={() => switchView("tasks")}
+            >
+              Tasks
+            </Button>
+            <Button
+              variant={view === "specs" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 gap-1.5"
+              onClick={() => switchView("specs")}
+            >
+              Specs
+              {pendingReview > 0 && (
+                <span className="rounded-full bg-amber-200 px-1.5 text-[11px] tabular-nums text-amber-900 dark:bg-amber-900 dark:text-amber-200">
+                  {pendingReview}
+                </span>
+              )}
+            </Button>
+          </nav>
           {error && (
-            <Badge variant="outline" className="gap-1 border-red-300 text-red-700 dark:border-red-900 dark:text-red-300">
+            <Badge
+              variant="outline"
+              className="gap-1 border-red-300 text-red-700 dark:border-red-900 dark:text-red-300"
+            >
               <AlertTriangle className="size-3" aria-hidden />
               {error}
             </Badge>
           )}
-          <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+          >
             {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
           </Button>
         </div>
       </header>
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {STATUSES.map((s) => (
-          <StatTile
-            key={s}
-            status={s}
-            count={counts[s]}
-            active={status === s}
-            onClick={() => setStatus(status === s ? ALL : s)}
-          />
-        ))}
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Select value={project} onValueChange={(v) => { setProject(v); setChange(ALL) }}>
-          <SelectTrigger className="w-44"><SelectValue placeholder="Project" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>All projects</SelectItem>
-            {projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={change} onValueChange={setChange}>
-          <SelectTrigger className="w-60"><SelectValue placeholder="Change" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>All changes</SelectItem>
-            {changes.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search id or title…"
-          className="w-56"
+      {view === "specs" && (
+        <SpecsView
+          specs={specs}
+          tasks={tasks}
+          error={specsError}
+          onOpen={(project, path) => setOpenSpec({ project, path })}
         />
-        <div className="ml-auto text-sm text-muted-foreground tabular-nums">
-          {filtered.length} shown
-        </div>
-      </div>
+      )}
 
-      <Card className="py-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Task</TableHead>
-              <TableHead className="hidden md:table-cell">Project</TableHead>
-              <TableHead className="hidden lg:table-cell">Change</TableHead>
-              <TableHead>Priority</TableHead>
-              <TableHead className="hidden sm:table-cell">Tier</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Updated</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
-                  No tasks match.
-                </TableCell>
-              </TableRow>
-            )}
-            {filtered.map((t) => {
-              const stale = isStaleClaim(t)
-              return (
-                <TableRow
-                  key={t.id}
-                  onClick={() => setSelected(t)}
-                  className="cursor-pointer"
-                >
-                  <TableCell className="max-w-72">
-                    <div className="truncate font-medium">{t.title}</div>
-                    <div className="truncate font-mono text-xs text-muted-foreground">{t.id}</div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">{t.project ?? "—"}</TableCell>
-                  <TableCell className="hidden max-w-48 truncate lg:table-cell">
-                    {t.metadata.change ?? "—"}
-                  </TableCell>
-                  <TableCell>{t.metadata.priority ?? "—"}</TableCell>
-                  <TableCell className="hidden sm:table-cell">{t.metadata.tier ?? "—"}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      <StatusBadge status={t.status} />
-                      {stale && (
-                        <span
-                          className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400"
-                          title="in-progress for over 2h — possibly an orphaned claim"
-                        >
-                          <AlertTriangle className="size-3.5" aria-hidden />
-                          stale
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground tabular-nums">
-                    {relativeTime(t.updated_at)}
-                  </TableCell>
+      {view === "tasks" && (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {STATUSES.map((s) => (
+              <StatTile
+                key={s}
+                status={s}
+                count={counts[s]}
+                active={status === s}
+                onClick={() => setStatus(status === s ? ALL : s)}
+              />
+            ))}
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Select
+              value={project}
+              onValueChange={(v) => {
+                setProject(v)
+                setChange(ALL)
+              }}
+            >
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Project" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All projects</SelectItem>
+                {projects.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={change} onValueChange={setChange}>
+              <SelectTrigger className="w-60">
+                <SelectValue placeholder="Change" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All changes</SelectItem>
+                {changes.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search id or title…"
+              className="w-56"
+            />
+            <div className="ml-auto text-sm text-muted-foreground tabular-nums">
+              {filtered.length} shown
+            </div>
+          </div>
+
+          <Card className="py-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Task</TableHead>
+                  <TableHead className="hidden md:table-cell">
+                    Project
+                  </TableHead>
+                  <TableHead className="hidden lg:table-cell">Change</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead className="hidden sm:table-cell">Tier</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Updated</TableHead>
                 </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
-      </Card>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="py-10 text-center text-muted-foreground"
+                    >
+                      No tasks match.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {filtered.map((t) => {
+                  const stale = isStaleClaim(t)
+                  return (
+                    <TableRow
+                      key={t.id}
+                      onClick={() => setSelected(t)}
+                      className="cursor-pointer"
+                    >
+                      <TableCell className="max-w-72">
+                        <div className="truncate font-medium">{t.title}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">
+                          {t.id}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {t.project ?? "—"}
+                      </TableCell>
+                      <TableCell className="hidden max-w-48 truncate lg:table-cell">
+                        {t.metadata.change ?? "—"}
+                      </TableCell>
+                      <TableCell>{t.metadata.priority ?? "—"}</TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        {t.metadata.tier ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          <StatusBadge status={t.status} />
+                          {stale && (
+                            <span
+                              className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400"
+                              title="in-progress for over 2h — possibly an orphaned claim"
+                            >
+                              <AlertTriangle className="size-3.5" aria-hidden />
+                              stale
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground tabular-nums">
+                        {relativeTime(t.updated_at)}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </Card>
+        </>
+      )}
 
       <Sheet
         open={selected !== null}
@@ -320,15 +438,27 @@ export default function App() {
             <>
               <SheetHeader>
                 <SheetTitle className="pr-8">{selected.title}</SheetTitle>
-                <SheetDescription className="font-mono text-xs">{selected.id}</SheetDescription>
+                <SheetDescription className="font-mono text-xs">
+                  {selected.id}
+                </SheetDescription>
               </SheetHeader>
               <div className="space-y-3 px-4 pb-6">
-                <DetailRow label="Status"><StatusBadge status={selected.status} /></DetailRow>
+                <DetailRow label="Status">
+                  <StatusBadge status={selected.status} />
+                </DetailRow>
                 <DetailRow label="Project">{selected.project ?? "—"}</DetailRow>
-                <DetailRow label="Change">{selected.metadata.change ?? "—"}</DetailRow>
-                <DetailRow label="Priority">{selected.metadata.priority ?? "—"}</DetailRow>
-                <DetailRow label="Type">{selected.metadata.type ?? "—"}</DetailRow>
-                <DetailRow label="Tier">{selected.metadata.tier ?? "—"}</DetailRow>
+                <DetailRow label="Change">
+                  {selected.metadata.change ?? "—"}
+                </DetailRow>
+                <DetailRow label="Priority">
+                  {selected.metadata.priority ?? "—"}
+                </DetailRow>
+                <DetailRow label="Type">
+                  {selected.metadata.type ?? "—"}
+                </DetailRow>
+                <DetailRow label="Tier">
+                  {selected.metadata.tier ?? "—"}
+                </DetailRow>
                 {selected.metadata.specRef && (
                   <DetailRow label="Spec ref">
                     {selected.project ? (
@@ -338,11 +468,18 @@ export default function App() {
                         title="Open the spec section in the viewer"
                         className="inline-flex max-w-full items-start gap-1 text-left font-mono text-xs underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground"
                       >
-                        <span className="break-all">{selected.metadata.specRef}</span>
-                        <FileText className="mt-0.5 size-3 shrink-0" aria-hidden />
+                        <span className="break-all">
+                          {selected.metadata.specRef}
+                        </span>
+                        <FileText
+                          className="mt-0.5 size-3 shrink-0"
+                          aria-hidden
+                        />
                       </button>
                     ) : (
-                      <span className="font-mono text-xs">{selected.metadata.specRef}</span>
+                      <span className="font-mono text-xs">
+                        {selected.metadata.specRef}
+                      </span>
                     )}
                   </DetailRow>
                 )}
@@ -355,11 +492,17 @@ export default function App() {
                 )}
                 {(selected.metadata.blocks?.length ?? 0) > 0 && (
                   <DetailRow label="Blocks">
-                    <span className="font-mono text-xs">{selected.metadata.blocks!.join(", ")}</span>
+                    <span className="font-mono text-xs">
+                      {selected.metadata.blocks!.join(", ")}
+                    </span>
                   </DetailRow>
                 )}
-                <DetailRow label="Created">{new Date(selected.created_at).toLocaleString()}</DetailRow>
-                <DetailRow label="Updated">{new Date(selected.updated_at).toLocaleString()}</DetailRow>
+                <DetailRow label="Created">
+                  {new Date(selected.created_at).toLocaleString()}
+                </DetailRow>
+                <DetailRow label="Updated">
+                  {new Date(selected.updated_at).toLocaleString()}
+                </DetailRow>
 
                 {(selected.metadata.statusNotes?.length ?? 0) > 0 && (
                   <>
@@ -407,6 +550,15 @@ export default function App() {
           specRef={selected.metadata.specRef}
           open={specOpen}
           onOpenChange={setSpecOpen}
+        />
+      )}
+      {openSpec && (
+        <SpecViewer
+          key={`${openSpec.project}/${openSpec.path}`}
+          project={openSpec.project}
+          specRef={openSpec.path}
+          open
+          onOpenChange={(o) => !o && setOpenSpec(null)}
         />
       )}
     </div>

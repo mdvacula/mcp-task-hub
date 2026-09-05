@@ -117,8 +117,29 @@ def repos_dir(tmp_path, monkeypatch):
     (root / "proj-a" / "README.md").write_text("outside openspec")
     (root / "proj-a" / "openspec" / "escape.md").symlink_to(root / "proj-a" / "README.md")
     (root / "secret.md").write_text("above the project")
+    archived = root / "proj-a" / "openspec" / "changes" / "archive" / "old"
+    archived.mkdir(parents=True)
+    (archived / "tasks.md").write_text("# old")
+    empty = root / "proj-b" / "openspec" / "changes" / "no-files"
+    empty.mkdir(parents=True)
     monkeypatch.setattr(server, "REPOS_DIR", root)
     return root
+
+
+def test_list_specs(test_app, repos_dir):
+    with TestClient(test_app) as client:
+        resp = client.get("/specs")
+        assert resp.status_code == 200
+        specs = resp.json()
+        assert [(s["project"], s["change"]) for s in specs] == [("proj-a", "c1")]
+        assert [f["name"] for f in specs[0]["files"]] == ["tasks.md"]
+        assert specs[0]["updated"] == specs[0]["files"][0]["mtime"]
+
+
+def test_list_specs_unmounted(test_app, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "REPOS_DIR", tmp_path / "absent")
+    with TestClient(test_app) as client:
+        assert client.get("/specs").json() == []
 
 
 def test_spec_file_served(test_app, repos_dir):

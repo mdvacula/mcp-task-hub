@@ -18,6 +18,7 @@ export default defineConfig({
       "/tasks": "http://127.0.0.1:8050",
       "/health": "http://127.0.0.1:8050",
       "/spec": "http://127.0.0.1:8050",
+      "/specs": "http://127.0.0.1:8050",
     },
   },
 })
