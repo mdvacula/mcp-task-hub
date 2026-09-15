@@ -31,6 +31,7 @@ The compose file binds **127.0.0.1:8050** (host) → 8000 (container):
 | `http://127.0.0.1:8050/tasks` | All tasks, JSON |
 | `http://127.0.0.1:8050/tasks/{id}` | One task, JSON |
 | `http://127.0.0.1:8050/health` | `{status, task_count}` |
+| `http://127.0.0.1:8050/metrics` | Per project → change benchmarks aggregated from `metadata.runLog` (+ `metrics`) and `timeline` |
 | `http://127.0.0.1:8050/specs` | Every `openspec/changes/<id>/` dir across the mounted projects (files + mtimes; `archive/` skipped) |
 | `http://127.0.0.1:8050/spec/{project}/{path}` | A project's `openspec/**/*.md` file as `text/markdown` (for the UI's spec viewer) |
 
@@ -49,7 +50,13 @@ claude mcp add --scope user --transport http task-hub http://127.0.0.1:8050/mcp
 | `fetch_tasks(id?, status?, change?, project?)` | Query, filters ANDed in SQL. `[]` on no match, never errors. Sorted P0→P1→P2→none, then created |
 | `update_task_status(id, status, notes?)` | Transition. `blocked` **requires** `notes`; notes append `{at, status, note}` to `metadata.statusNotes` |
 
-Statuses: `pending | in-progress | completed | blocked` (validated).
+Statuses: `pending | in-progress | in-review | completed | blocked` (validated).
+Lifecycle in the drain: a worker claims (`in-progress`), commits in its lane
+(`in-review`), and the task becomes `completed` only when the reviewed lane
+has been rebased, fast-forwarded and pushed to main — so `completed` means
+"on main", and `blockedBy` never releases a dependent early. Every transition
+is stamped into `metadata.timeline` (`{at, from, to}`), which is where lead
+times come from.
 
 ## Data model
 
@@ -70,7 +77,7 @@ cycles).
 Vite + React + Tailwind v4 + shadcn/ui, dark by default, served by the hub
 itself at `/ui/`. Stat tiles (click to filter), project/change/status filters,
 search, detail sheet showing the dependency graph, `statusNotes`, and `runLog`,
-stale-claim highlighting (`in-progress` untouched >2 h), 5-second polling.
+stale-claim highlighting (`in-progress` or `in-review` untouched >2 h), 5-second polling.
 
 **Spec viewer.** A task's `metadata.specRef`
 (`openspec/changes/<id>/tasks.md#3-some-section`) is a link: it opens the

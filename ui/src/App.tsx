@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Circle,
   CircleDashed,
+  Eye,
   FileText,
   Moon,
   Sun,
@@ -41,12 +42,15 @@ import { SpecViewer } from "@/components/SpecViewer"
 import { SpecsView } from "@/components/SpecsView"
 import { hubSummary } from "@/lib/hubSummary"
 import { useSpecs } from "@/lib/useSpecs"
+import { MetricsView } from "@/components/MetricsView"
+import { useMetrics } from "@/lib/useMetrics"
 import { isStaleClaim, relativeTime, useTasks } from "@/lib/useTasks"
 import type { Task, TaskStatus } from "@/lib/types"
 
 const STATUSES: TaskStatus[] = [
   "pending",
   "in-progress",
+  "in-review",
   "blocked",
   "completed",
 ]
@@ -66,6 +70,12 @@ const STATUS_META: Record<
     badgeClass:
       "border-sky-300 bg-sky-100 text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300",
   },
+  "in-review": {
+    label: "In review",
+    icon: Eye,
+    badgeClass:
+      "border-violet-300 bg-violet-100 text-violet-900 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300",
+  },
   blocked: {
     label: "Blocked",
     icon: Ban,
@@ -82,9 +92,13 @@ const STATUS_META: Record<
 
 const ALL = "__all__"
 
-type View = "tasks" | "specs"
+type View = "tasks" | "specs" | "metrics"
 const viewFromHash = (): View =>
-  location.hash === "#specs" ? "specs" : "tasks"
+  location.hash === "#specs"
+    ? "specs"
+    : location.hash === "#metrics"
+      ? "metrics"
+      : "tasks"
 
 function StatusBadge({ status }: { status: TaskStatus }) {
   const meta = STATUS_META[status] ?? STATUS_META.pending
@@ -156,6 +170,9 @@ export default function App() {
   const [specOpen, setSpecOpen] = useState(false)
   const [view, setView] = useState<View>(viewFromHash)
   const { specs, error: specsError } = useSpecs(true)
+  const { groups: metricGroups, error: metricsError } = useMetrics(
+    view === "metrics",
+  )
   // A spec opened from the Specs screen (no task, no anchor).
   const [openSpec, setOpenSpec] = useState<{
     project: string
@@ -164,7 +181,7 @@ export default function App() {
 
   function switchView(v: View) {
     setView(v)
-    location.hash = v === "specs" ? "#specs" : ""
+    location.hash = v === "tasks" ? "" : `#${v}`
   }
   const pendingReview = specs.filter(
     (s) => hubSummary(tasks, s.project, s.change) === null,
@@ -260,6 +277,14 @@ export default function App() {
                 </span>
               )}
             </Button>
+            <Button
+              variant={view === "metrics" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7"
+              onClick={() => switchView("metrics")}
+            >
+              Metrics
+            </Button>
           </nav>
           {error && (
             <Badge
@@ -290,9 +315,13 @@ export default function App() {
         />
       )}
 
+      {view === "metrics" && (
+        <MetricsView groups={metricGroups} error={metricsError} />
+      )}
+
       {view === "tasks" && (
         <>
-          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
             {STATUSES.map((s) => (
               <StatTile
                 key={s}
@@ -404,7 +433,7 @@ export default function App() {
                           {stale && (
                             <span
                               className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400"
-                              title="in-progress for over 2h — possibly an orphaned claim"
+                              title="in-progress / in-review for over 2h — possibly an orphaned claim"
                             >
                               <AlertTriangle className="size-3.5" aria-hidden />
                               stale
@@ -503,6 +532,21 @@ export default function App() {
                 <DetailRow label="Updated">
                   {new Date(selected.updated_at).toLocaleString()}
                 </DetailRow>
+
+                {(selected.metadata.timeline?.length ?? 0) > 0 && (
+                  <DetailRow label="Timeline">
+                    <ol className="space-y-0.5 font-mono text-xs">
+                      {selected.metadata.timeline!.map((e, i) => (
+                        <li key={i}>
+                          <span className="text-muted-foreground">
+                            {new Date(e.at).toLocaleString()}
+                          </span>{" "}
+                          {e.from ?? "·"} → {e.to}
+                        </li>
+                      ))}
+                    </ol>
+                  </DetailRow>
+                )}
 
                 {(selected.metadata.statusNotes?.length ?? 0) > 0 && (
                   <>

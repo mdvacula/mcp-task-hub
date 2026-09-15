@@ -18,6 +18,7 @@ export function hubSummary(
   const byStatus: Record<TaskStatus, number> = {
     pending: 0,
     "in-progress": 0,
+    "in-review": 0,
     blocked: 0,
     completed: 0,
   }

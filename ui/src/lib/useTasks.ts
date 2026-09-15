@@ -62,7 +62,7 @@ export function relativeTime(iso: string): string {
 }
 
 export function isStaleClaim(task: Task): boolean {
-  if (task.status !== "in-progress") return false
+  if (task.status !== "in-progress" && task.status !== "in-review") return false
   const updated = new Date(task.updated_at).getTime()
   return !Number.isNaN(updated) && Date.now() - updated > 2 * 3600 * 1000
 }

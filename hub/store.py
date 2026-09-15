@@ -14,7 +14,10 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-VALID_STATUSES = {"pending", "in-progress", "completed", "blocked"}
+# Lifecycle: pending → in-progress (worker claimed) → in-review (worker committed
+# in its lane; reviewer / fix cycles / landing still ahead) → completed (landed on
+# main). blocked can be entered from any state and needs notes.
+VALID_STATUSES = {"pending", "in-progress", "in-review", "completed", "blocked"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -103,15 +106,20 @@ class TaskStore:
             existing = await cur.fetchone()
 
         if existing is None:
+            meta = dict(metadata or {})
+            if status and status != "pending":
+                meta.setdefault("timeline", []).append({"at": now, "from": None, "to": status})
             await self._db.execute(
                 "INSERT INTO tasks (id,title,status,project,metadata,created_at,updated_at)"
                 " VALUES (?,?,?,?,?,?,?)",
-                (id, title, status or "pending", project, json.dumps(metadata or {}), now, now),
+                (id, title, status or "pending", project, json.dumps(meta), now, now),
             )
             log.info("Created task %s", id)
         else:
             ex = self._row(existing)
             merged = {**ex["metadata"], **(metadata or {})}
+            if status is not None and status != ex["status"]:
+                merged.setdefault("timeline", []).append({"at": now, "from": ex["status"], "to": status})
             await self._db.execute(
                 "UPDATE tasks SET title=?,status=?,project=?,metadata=?,updated_at=? WHERE id=?",
                 (
@@ -166,20 +174,21 @@ class TaskStore:
             row = await cur.fetchone()
         if not row:
             raise ValueError(f"Task not found: {id}")
+        now = _now()
+        meta = self._row(row)["metadata"]
+        old_status = self._row(row)["status"]
         if notes:
-            meta = self._row(row)["metadata"]
             meta.setdefault("statusNotes", []).append(
-                {"at": _now(), "status": status, "note": notes}
+                {"at": now, "status": status, "note": notes}
             )
-            await self._db.execute(
-                "UPDATE tasks SET status=?,metadata=?,updated_at=? WHERE id=?",
-                (status, json.dumps(meta), _now(), id),
-            )
-        else:
-            await self._db.execute(
-                "UPDATE tasks SET status=?,updated_at=? WHERE id=?",
-                (status, _now(), id),
-            )
+        if status != old_status:
+            # Every transition is stamped so lead times (claim → review → landed)
+            # can be measured without a separate observability layer.
+            meta.setdefault("timeline", []).append({"at": now, "from": old_status, "to": status})
+        await self._db.execute(
+            "UPDATE tasks SET status=?,metadata=?,updated_at=? WHERE id=?",
+            (status, json.dumps(meta), now, id),
+        )
         await self._db.commit()
         log.info("Status %s → %s", id, status)
         return await self.get_task(id)

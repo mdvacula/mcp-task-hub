@@ -202,3 +202,43 @@ def test_ui_assets_immutable(test_app, ui_dir):
         resp = client.get("/ui/assets/index-abc123.js")
         assert resp.status_code == 200
         assert "immutable" in resp.headers["cache-control"]
+
+
+# ── /metrics ─────────────────────────────────────────────────────────────────
+
+
+def test_metrics_aggregates_runlog(temp_db_path):
+    app = _app(temp_db_path, seed=False)
+    with TestClient(app) as client:
+        async def seed():
+            await server.store.sync_task(
+                id="c1-a", title="A", project="proj-a",
+                metadata={"change": "c1", "runLog": [
+                    {"tier": "sonnet", "verdict": "PASS", "fixCycles": 0, "landed": "a..b",
+                     "metrics": {"worker": {"reads": 10, "graft": 3, "in_tok": 1000, "out_tok": 50, "wall_s": 100},
+                                 "reviewer": {"in_tok": 400}}},
+                ]},
+            )
+            await server.store.sync_task(
+                id="c1-b", title="B", project="proj-a",
+                metadata={"change": "c1", "runLog": [
+                    {"tier": "opus", "verdict": "FAIL", "fixCycles": 1, "landed": None,
+                     "metrics": {"worker": {"reads": 30, "graft": 0, "in_tok": 3000, "out_tok": 90, "wall_s": 300}}},
+                    {"tier": "opus", "verdict": "PASS", "fixCycles": 1, "landed": "b..c"},
+                ]},
+            )
+            await server.store.update_task_status("c1-a", "in-progress")
+            await server.store.update_task_status("c1-a", "in-review")
+            await server.store.update_task_status("c1-a", "completed")
+
+        client.portal.call(seed)
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        (g,) = resp.json()
+        assert (g["project"], g["change"], g["tasks"]) == ("proj-a", "c1", 2)
+        assert g["runs"] == 3 and g["landed"] == 2 and g["reviewed"] == 3
+        assert g["passFirst"] == 1 and g["fixCycles"] == 2
+        assert g["metricRuns"] == 2 and g["graftRuns"] == 1
+        assert g["median"]["reads"] == 20 and g["median"]["reviewerInTok"] == 400
+        assert g["byTier"]["opus"]["runs"] == 2
+        assert g["median"]["leadS"] is not None and g["median"]["reviewToLandS"] is not None

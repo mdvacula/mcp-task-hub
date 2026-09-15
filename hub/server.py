@@ -2,7 +2,7 @@
 MCP Task Hub — tool definitions, HTTP read endpoints, and the task viewer UI.
 
 Transport is streamable HTTP (the SSE transport is deprecated). The MCP
-endpoint lives at /mcp; /health, /tasks, /tasks/{id}, /specs, /spec/* and /ui/* are plain
+endpoint lives at /mcp; /health, /tasks, /tasks/{id}, /specs, /spec/*, /metrics and /ui/* are plain
 HTTP custom routes on the same app. The store connects lazily on first use,
 so no lifespan wiring is needed in stateless mode.
 """
@@ -65,7 +65,7 @@ async def sync_task(
     Args:
         id:       Stable kebab-case slug e.g. '<change-id>-<task-slug>'
         title:    Human-readable title
-        status:   pending | in-progress | completed | blocked
+        status:   pending | in-progress | in-review | completed | blocked
         metadata: Keys: change, specRef, priority (P0|P1|P2),
                   type (task|feature|chore), tier (haiku|sonnet|opus),
                   blockedBy, blocks, runLog, notes
@@ -89,7 +89,7 @@ async def fetch_tasks(
 
     Args:
         id:      Exact task ID
-        status:  pending | in-progress | completed | blocked
+        status:  pending | in-progress | in-review | completed | blocked
         change:  Filter by metadata.change (OpenSpec change ID)
         project: Filter by owning repo, e.g. 'newjerseybrews'
     """
@@ -103,7 +103,7 @@ async def update_task_status(id: str, status: str, notes: str | None = None) -> 
 
     Args:
         id:     Task to update
-        status: pending | in-progress | completed | blocked
+        status: pending | in-progress | in-review | completed | blocked
         notes:  Why — REQUIRED when status is 'blocked'. Appended with a
                 timestamp to metadata.statusNotes.
     """
@@ -128,6 +128,118 @@ async def get_task_endpoint(request: Request) -> Response:
         if task
         else JSONResponse({"error": "not found"}, status_code=404)
     )
+
+
+# ── Metrics (benchmarks aggregated from runLog + timeline) ───────────────────
+
+
+def _median(xs: list[float]) -> float | None:
+    xs = sorted(x for x in xs if isinstance(x, (int, float)))
+    if not xs:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def _parse_ts(s: str | None) -> float | None:
+    if not s:
+        return None
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _lead_seconds(timeline: list[dict], start: str, end: str) -> float | None:
+    """Seconds from the first `start` transition to the last `end` transition."""
+    t0 = next((_parse_ts(e.get("at")) for e in timeline if e.get("to") == start), None)
+    t1 = next((_parse_ts(e.get("at")) for e in reversed(timeline) if e.get("to") == end), None)
+    return (t1 - t0) if t0 is not None and t1 is not None and t1 >= t0 else None
+
+
+async def metrics(request: Request) -> JSONResponse:
+    """GET /metrics → per project → change benchmarks from metadata.runLog / timeline.
+
+    Each runLog entry the drain writes may carry `metrics` ({worker, reviewer,
+    fix[]} with reads/graft/edits/turns/in_tok/out_tok/wall_s, measured from
+    the subagent transcripts). Groups report medians, review pass rate on the
+    first try, fix-cycle totals, graft adoption, and lead times.
+    """
+    tasks = await store.all_tasks()
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for t in tasks:
+        md = t.get("metadata") or {}
+        run_log = md.get("runLog") or []
+        key = (t.get("project") or "—", md.get("change") or "—")
+        g = groups.setdefault(
+            key,
+            {
+                "project": key[0], "change": key[1], "tasks": 0, "byStatus": {},
+                "runs": 0, "landed": 0, "passFirst": 0, "reviewed": 0, "fixCycles": 0,
+                "blockedRuns": 0, "graftRuns": 0, "metricRuns": 0,
+                "_reads": [], "_graft": [], "_inTok": [], "_outTok": [], "_wall": [],
+                "_revInTok": [], "_lead": [], "_review": [], "byTier": {},
+            },
+        )
+        g["tasks"] += 1
+        g["byStatus"][t["status"]] = g["byStatus"].get(t["status"], 0) + 1
+        tl = md.get("timeline") or []
+        lead = _lead_seconds(tl, "in-progress", "completed")
+        if lead is not None:
+            g["_lead"].append(lead)
+        rev = _lead_seconds(tl, "in-review", "completed")
+        if rev is not None:
+            g["_review"].append(rev)
+        for e in run_log:
+            if not isinstance(e, dict):
+                continue
+            g["runs"] += 1
+            tier = e.get("tier") or "?"
+            bt = g["byTier"].setdefault(tier, {"runs": 0, "passFirst": 0, "reviewed": 0, "fixCycles": 0})
+            bt["runs"] += 1
+            if e.get("landed"):
+                g["landed"] += 1
+            if e.get("verdict") in ("PASS", "FAIL"):
+                g["reviewed"] += 1
+                bt["reviewed"] += 1
+                if e.get("verdict") == "PASS" and not e.get("fixCycles"):
+                    g["passFirst"] += 1
+                    bt["passFirst"] += 1
+            fc = e.get("fixCycles") or 0
+            g["fixCycles"] += fc
+            bt["fixCycles"] += fc
+            if e.get("outcome") == "blocked":
+                g["blockedRuns"] += 1
+            m = e.get("metrics") or {}
+            w = m.get("worker") or {}
+            if w:
+                g["metricRuns"] += 1
+                if (w.get("graft") or 0) > 0:
+                    g["graftRuns"] += 1
+                for src, dst in (("reads", "_reads"), ("graft", "_graft"), ("in_tok", "_inTok"),
+                                 ("out_tok", "_outTok"), ("wall_s", "_wall")):
+                    if isinstance(w.get(src), (int, float)):
+                        g[dst].append(w[src])
+            r = m.get("reviewer") or {}
+            if isinstance(r.get("in_tok"), (int, float)):
+                g["_revInTok"].append(r["in_tok"])
+    out = []
+    for g in groups.values():
+        g["median"] = {
+            "reads": _median(g.pop("_reads")),
+            "graftCalls": _median(g.pop("_graft")),
+            "inTok": _median(g.pop("_inTok")),
+            "outTok": _median(g.pop("_outTok")),
+            "wallS": _median(g.pop("_wall")),
+            "reviewerInTok": _median(g.pop("_revInTok")),
+            "leadS": _median(g.pop("_lead")),
+            "reviewToLandS": _median(g.pop("_review")),
+        }
+        out.append(g)
+    out.sort(key=lambda g: (g["project"], g["change"]))
+    return JSONResponse(out)
 
 
 # ── Spec files (read-only, for the UI's specRef viewer) ──────────────────────
@@ -237,6 +349,7 @@ http_routes = [
     Route("/tasks", list_tasks),
     Route("/tasks/{task_id:str}", get_task_endpoint),
     Route("/specs", list_specs),
+    Route("/metrics", metrics),
     Route("/spec/{project:str}/{path:path}", spec_file),
     Route("/ui", ui_root),
     Route("/ui/{path:path}", ui_file),

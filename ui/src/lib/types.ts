@@ -1,4 +1,5 @@
-export type TaskStatus = "pending" | "in-progress" | "completed" | "blocked"
+export type TaskStatus =
+  "pending" | "in-progress" | "in-review" | "completed" | "blocked"
 
 export interface StatusNote {
   at: string
@@ -6,7 +7,33 @@ export interface StatusNote {
   note: string
 }
 
+export interface AgentMetrics {
+  reads?: number
+  graft?: number
+  edits?: number
+  turns?: number
+  in_tok?: number
+  out_tok?: number
+  wall_s?: number
+  model?: string | null
+}
+
+export interface RunMetrics {
+  worker?: AgentMetrics
+  reviewer?: AgentMetrics
+  fix?: AgentMetrics[]
+}
+
+export interface TimelineEntry {
+  at: string
+  from: string | null
+  to: string
+}
+
 export interface RunLogEntry {
+  metrics?: RunMetrics
+  landed?: string | null
+  outcome?: string
   at?: string
   agent?: string
   model?: string
@@ -30,6 +57,7 @@ export interface TaskMetadata {
   blocks?: string[]
   statusNotes?: StatusNote[]
   runLog?: RunLogEntry[]
+  timeline?: TimelineEntry[]
   notes?: string
   [key: string]: unknown
 }
@@ -61,4 +89,34 @@ export interface SpecChange {
   change: string
   files: SpecFile[]
   updated: number // epoch seconds, newest file
+}
+
+/** One row of GET /metrics: a project/change benchmark group. */
+export interface MetricsGroup {
+  project: string
+  change: string
+  tasks: number
+  byStatus: Partial<Record<TaskStatus, number>>
+  runs: number
+  landed: number
+  passFirst: number
+  reviewed: number
+  fixCycles: number
+  blockedRuns: number
+  graftRuns: number
+  metricRuns: number
+  byTier: Record<
+    string,
+    { runs: number; passFirst: number; reviewed: number; fixCycles: number }
+  >
+  median: {
+    reads: number | null
+    graftCalls: number | null
+    inTok: number | null
+    outTok: number | null
+    wallS: number | null
+    reviewerInTok: number | null
+    leadS: number | null
+    reviewToLandS: number | null
+  }
 }

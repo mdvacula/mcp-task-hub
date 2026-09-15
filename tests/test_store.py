@@ -157,3 +157,30 @@ async def test_migration_adds_project_column(temp_db_path):
         assert migrated["project"] == "proj-a"
     finally:
         await s.close()
+
+
+async def test_in_review_status_and_timeline(store):
+    await store.sync_task(id="t", title="T")
+    await store.update_task_status("t", "in-progress")
+    await store.update_task_status("t", "in-review")
+    task = await store.update_task_status("t", "completed")
+    assert task["status"] == "completed"
+    tl = task["metadata"]["timeline"]
+    assert [(e["from"], e["to"]) for e in tl] == [
+        ("pending", "in-progress"),
+        ("in-progress", "in-review"),
+        ("in-review", "completed"),
+    ]
+    assert all(e["at"] for e in tl)
+    # same-status update does not add a transition; sync_task with a new status does
+    await store.update_task_status("t", "completed")
+    assert len((await store.get_task("t"))["metadata"]["timeline"]) == 3
+    task = await store.sync_task(id="t", title="T", status="pending")
+    assert task["metadata"]["timeline"][-1] == {**task["metadata"]["timeline"][-1], "from": "completed", "to": "pending"}
+
+
+async def test_sync_task_created_with_status_stamps_timeline(store):
+    task = await store.sync_task(id="b1", title="B", status="blocked", metadata={"notes": "gate"})
+    assert task["metadata"]["timeline"][0]["to"] == "blocked"
+    plain = await store.sync_task(id="p1", title="P")
+    assert "timeline" not in plain["metadata"]
