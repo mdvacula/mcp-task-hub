@@ -462,7 +462,7 @@ export default function App() {
           }
         }}
       >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent className="w-full overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
           {selected && (
             <>
               <SheetHeader>

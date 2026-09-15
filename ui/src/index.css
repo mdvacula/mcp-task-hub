@@ -134,6 +134,10 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+@media (max-width: 639px) {
+  .spec-md { font-size: 0.9375rem; }
+  .spec-md pre { margin-left: -1rem; margin-right: -1rem; border-radius: 0; }
+}
 .spec-md > :first-child { margin-top: 0; }
 .spec-md h1, .spec-md h2, .spec-md h3, .spec-md h4, .spec-md h5, .spec-md h6 {
   font-weight: 600;
