@@ -242,3 +242,76 @@ def test_metrics_aggregates_runlog(temp_db_path):
         assert g["median"]["reads"] == 20 and g["median"]["reviewerInTok"] == 400
         assert g["byTier"]["opus"]["runs"] == 2
         assert g["median"]["leadS"] is not None and g["median"]["reviewToLandS"] is not None
+
+
+# ── /metrics/runs (transcript-derived) ───────────────────────────────────────
+
+
+def _transcript(path, prompt, turns, results=None):
+    """Write a minimal Claude Code subagent transcript: one user prompt, then
+    `turns` assistant messages each with tool calls + usage; `results` maps a
+    tool_use id (t<turn><index>) to its tool_result text."""
+    import json as _json
+
+    lines = [{"type": "user", "timestamp": "2026-09-16T10:00:00.000Z", "message": {"content": prompt}}]
+    t = 0
+    for calls in turns:
+        t += 1
+        ids = [f"t{t}{i}" for i in range(len(calls))]
+        lines.append({
+            "type": "assistant", "timestamp": f"2026-09-16T10:0{t}:00.000Z",
+            "message": {"model": "claude-sonnet-5", "usage": {"input_tokens": 100, "cache_read_input_tokens": 900, "output_tokens": 10},
+                        "content": [{"type": "tool_use", "id": tid, "name": n, "input": inp} for tid, (n, inp) in zip(ids, calls)]},
+        })
+        if results:
+            lines.append({"type": "user", "timestamp": f"2026-09-16T10:0{t}:30.000Z", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": tid, "content": results.get(tid, "ok")} for tid in ids]}})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(_json.dumps(l) for l in lines) + "\n")
+
+
+@pytest.fixture
+def transcripts_dir(tmp_path, monkeypatch):
+    root = tmp_path / "transcripts"
+    base = root / "-code-proj-a" / "sess" / "subagents" / "workflows"
+    _transcript(base / "wf_1" / "agent-a.jsonl", "Run task c1-a (\"A\") in project repo /x — lane", [
+        [("Bash", {"command": "cd /x && graft ask \"foo\" --source"}), ("Read", {"file_path": "/x/a.ts"})],
+        [("Bash", {"command": "cd /x && grep -rn foo src"}), ("Edit", {"file_path": "/x/a.ts"})],
+    ])
+    _transcript(base / "wf_1" / "agent-b.jsonl", "Review task c1-a in /x, commit range: 1..2. Follow your protocol.", [
+        [("Bash", {"command": "git diff 1..2"}), ("Bash", {"command": "cd /x && graft callers foo"})],
+    ], results={"t11": "bash: graft: command not found"})
+    _transcript(base / "wf_2" / "agent-c.jsonl", "In /x: map the code most relevant to this idea: \"thing\". Report", [
+        [("Bash", {"command": "graft map"}), ("Bash", {"command": "graft skeleton src/a.ts"})],
+    ])
+    _transcript(base / "wf_2" / "agent-d.jsonl", "Adversarially critique the change at /x/openspec/changes/new-thing for COMPLETENESS", [
+        [("Read", {"file_path": "/x/openspec/changes/new-thing/tasks.md"})],
+    ])
+    monkeypatch.setattr(server, "TRANSCRIPTS_DIR", root)
+    monkeypatch.setattr(server, "CODE_ROOT", "/code")
+    return root
+
+
+def test_metrics_runs_drain(test_app, transcripts_dir):
+    with TestClient(test_app) as client:
+        rows = client.get("/metrics/runs?project=proj-a").json()
+        assert sorted(r["role"] for r in rows) == ["reviewer", "worker"]
+        w = next(r for r in rows if r["role"] == "worker")
+        assert (w["task"], w["wf"], w["reads"], w["graft"], w["edits"], w["turns"]) == ("c1-a", "wf_1", 2, 1, 1, 2)
+        assert w["in_tok"] == 2000 and w["out_tok"] == 20 and w["wall_s"] == 120
+        rev = next(r for r in rows if r["role"] == "reviewer")
+        assert rev["reads"] == 1  # git diff is a read-type Bash call
+        assert rev["graft"] == 0  # the graft call errored (CLI missing) — not counted as graft use
+
+
+def test_metrics_runs_spec(test_app, transcripts_dir):
+    with TestClient(test_app) as client:
+        rows = client.get("/metrics/runs?project=proj-a&phase=spec").json()
+        assert sorted((r["role"], r["graft"], r["change"] or "") for r in rows) == [("spec:code-map", 2, ""), ("spec:critic", 0, "new-thing")]
+
+
+def test_metrics_runs_validation(test_app, transcripts_dir):
+    with TestClient(test_app) as client:
+        assert client.get("/metrics/runs").status_code == 400
+        assert client.get("/metrics/runs?project=proj-a&phase=nope").status_code == 400
+        assert client.get("/metrics/runs?project=nope").json() == []

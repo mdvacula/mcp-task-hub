@@ -120,3 +120,22 @@ export interface MetricsGroup {
     reviewToLandS: number | null
   }
 }
+
+/** One row of GET /metrics/runs: a subagent run measured from its transcript. */
+export interface AgentRun {
+  role: string
+  task: string | null
+  wf: string | null
+  change: string | null
+  reads: number
+  graft: number
+  edits: number
+  tools: number
+  turns: number
+  in_tok: number
+  out_tok: number
+  model: string | null
+  start: string | null
+  end: string | null
+  wall_s: number | null
+}

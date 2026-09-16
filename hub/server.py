@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from . import runs as runs_mod
 from .store import TaskStore
 
 load_dotenv()
@@ -34,6 +35,10 @@ UI_DIR = Path(os.getenv("HUB_UI_DIR", "/app/ui"))
 # Read-only root holding one checkout per project (project = dir name), so the
 # UI can open the OpenSpec file a task's specRef points at. Mount it ro.
 REPOS_DIR = Path(os.getenv("HUB_REPOS_DIR", "/repos"))
+# Read-only Claude Code transcripts root (host ~/.claude/projects) for per-run
+# agent metrics; only aggregates are served, never content.
+TRANSCRIPTS_DIR = Path(os.getenv("HUB_TRANSCRIPTS_DIR", "/transcripts"))
+CODE_ROOT = os.getenv("HUB_CODE_ROOT", "/home/mdv/code")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL))
 
@@ -242,6 +247,25 @@ async def metrics(request: Request) -> JSONResponse:
     return JSONResponse(out)
 
 
+async def metrics_runs(request: Request) -> JSONResponse:
+    """GET /metrics/runs?project=P&phase=drain|spec&since=YYYY-MM-DD
+
+    One row per subagent run (role, task/change, workflow id, reads, graft
+    calls, edits, turns, input/output tokens, wall seconds), oldest first,
+    measured from the mounted transcripts. Empty list when the mount is
+    absent or the project has no transcripts.
+    """
+    q = request.query_params
+    project = q.get("project")
+    if not project or "/" in project or project.startswith("."):
+        return JSONResponse({"error": "project required"}, status_code=400)
+    phase = q.get("phase", "drain")
+    if phase not in ("drain", "spec"):
+        return JSONResponse({"error": "phase must be drain or spec"}, status_code=400)
+    rows = runs_mod.runs(TRANSCRIPTS_DIR, project, phase=phase, since=q.get("since"), code_root=CODE_ROOT)
+    return JSONResponse(rows)
+
+
 # ── Spec files (read-only, for the UI's specRef viewer) ──────────────────────
 
 
@@ -350,6 +374,7 @@ http_routes = [
     Route("/tasks/{task_id:str}", get_task_endpoint),
     Route("/specs", list_specs),
     Route("/metrics", metrics),
+    Route("/metrics/runs", metrics_runs),
     Route("/spec/{project:str}/{path:path}", spec_file),
     Route("/ui", ui_root),
     Route("/ui/{path:path}", ui_file),

@@ -1,5 +1,14 @@
 import { useMemo, useState } from "react"
 
+import {
+  CodeMapReads,
+  PassFirstByChange,
+  RunsOverTime,
+  SpecTokensByStage,
+} from "@/components/MetricsCharts"
+import { fmtK as fmtTok, summarizeSpecRuns } from "@/lib/specRuns"
+import { useRuns } from "@/lib/useRuns"
+
 import { Card } from "@/components/ui/card"
 import {
   Select,
@@ -46,12 +55,36 @@ interface Props {
  * timeline. Medians are per worker run; compare rows over time or across
  * settings (tier, graft) rather than single tasks.
  */
+const RANGES = [
+  { key: "7", label: "Last 7 days" },
+  { key: "30", label: "Last 30 days" },
+  { key: "all", label: "All time" },
+] as const
+
+function sinceFor(key: string): string | null {
+  if (key === "all") return null
+  return new Date(Date.now() - Number(key) * 86400000)
+    .toISOString()
+    .slice(0, 10)
+}
+
 export function MetricsView({ groups, error }: Props) {
-  const [project, setProject] = useState(ALL)
   const projects = useMemo(
-    () => [...new Set(groups.map((g) => g.project))].sort(),
+    () =>
+      [
+        ...new Set(groups.map((g) => g.project).filter((p) => p !== "—")),
+      ].sort(),
     [groups],
   )
+  const [project, setProject] = useState<string>(ALL)
+  const [range, setRange] = useState<string>("30")
+  // Per-run charts read one project's transcripts; default to the first
+  // project rather than "all".
+  const runProject = project === ALL ? (projects[0] ?? null) : project
+  const since = sinceFor(range)
+  const drain = useRuns(runProject, "drain", since)
+  const spec = useRuns(runProject, "spec", since)
+  const specRuns = useMemo(() => summarizeSpecRuns(spec.runs), [spec.runs])
   const rows = useMemo(
     () =>
       groups.filter(
@@ -76,6 +109,18 @@ export function MetricsView({ groups, error }: Props) {
             ))}
           </SelectContent>
         </Select>
+        <Select value={range} onValueChange={setRange}>
+          <SelectTrigger className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RANGES.map((r) => (
+              <SelectItem key={r.key} value={r.key}>
+                {r.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="ml-auto text-sm text-muted-foreground tabular-nums">
           {rows.length} changes with runs
         </div>
@@ -83,6 +128,72 @@ export function MetricsView({ groups, error }: Props) {
       {error && (
         <p className="mb-3 text-sm text-red-700 dark:text-red-300">{error}</p>
       )}
+      {(drain.error || spec.error) && (
+        <p className="mb-3 text-sm text-red-700 dark:text-red-300">
+          {drain.error ?? spec.error} — per-run charts need the transcripts
+          mount (HUB_TRANSCRIPTS_DIR).
+        </p>
+      )}
+
+      <h2 className="mb-1 text-sm font-medium">
+        Drain — per worker run
+        {runProject && (
+          <span className="font-normal text-muted-foreground">
+            {" "}
+            · {runProject}
+          </span>
+        )}
+      </h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        One dot per worker run; orange = the run made at least one graft call.
+        Watch these fall as the protocol is tuned.
+      </p>
+      <div className="mb-6 grid gap-4 lg:grid-cols-2">
+        <Card className="gap-2 py-3">
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            Read-type tool calls
+          </h3>
+          <div className="px-2">
+            <RunsOverTime runs={drain.runs} measure="reads" label="reads" />
+          </div>
+        </Card>
+        <Card className="gap-2 py-3">
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            Input tokens (all turns, cache included)
+          </h3>
+          <div className="px-2">
+            <RunsOverTime
+              runs={drain.runs}
+              measure="in_tok"
+              label="input tokens"
+              unit="M"
+            />
+          </div>
+        </Card>
+        <Card className="gap-2 py-3">
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            Output tokens
+          </h3>
+          <div className="px-2">
+            <RunsOverTime
+              runs={drain.runs}
+              measure="out_tok"
+              label="output tokens"
+              unit="k"
+            />
+          </div>
+        </Card>
+        <Card className="gap-2 py-3">
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            Review passed first time, by change
+          </h3>
+          <div className="px-2">
+            <PassFirstByChange groups={rows} />
+          </div>
+        </Card>
+      </div>
+
+      <h2 className="mb-1 text-sm font-medium">Drain — per change</h2>
       <Card className="py-0">
         <div className="overflow-x-auto">
           <Table>
@@ -247,6 +358,134 @@ export function MetricsView({ groups, error }: Props) {
         token over the run, cache included). Rows without metrics predate that
         capture.
       </p>
+
+      <h2 className="mt-8 mb-1 text-sm font-medium">
+        Spec — per /hub-spec run
+        {runProject && (
+          <span className="font-normal text-muted-foreground">
+            {" "}
+            · {runProject}
+          </span>
+        )}
+      </h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Explore ∥ → approaches + judge → draft → critics (→ revise). Tokens are
+        dominated by the drafter and critics and scale with change size; the
+        code-map explorer is the cleanest place to see graft's effect.
+      </p>
+      <div className="mb-4 grid gap-4 lg:grid-cols-2">
+        <Card className="gap-2 py-3">
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            Input tokens per spec run, by stage
+          </h3>
+          <div className="px-2">
+            <SpecTokensByStage specs={specRuns} />
+          </div>
+        </Card>
+        <Card className="gap-2 py-3">
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            Code-map explorer: read-type calls per run
+          </h3>
+          <div className="px-2">
+            <CodeMapReads specs={specRuns} />
+          </div>
+        </Card>
+      </div>
+      <Card className="py-0">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Spec run</TableHead>
+                <TableHead className="text-right">Agents</TableHead>
+                <TableHead
+                  className="text-right"
+                  title="read-type calls across all agents"
+                >
+                  Reads
+                </TableHead>
+                <TableHead
+                  className="text-right"
+                  title="graft calls across all agents"
+                >
+                  Graft
+                </TableHead>
+                <TableHead
+                  className="text-right"
+                  title="input tokens, all agents"
+                >
+                  In tok
+                </TableHead>
+                <TableHead
+                  className="text-right"
+                  title="output tokens, all agents"
+                >
+                  Out tok
+                </TableHead>
+                <TableHead
+                  className="text-right"
+                  title="first agent start → last agent end"
+                >
+                  Wall
+                </TableHead>
+                <TableHead
+                  className="text-right"
+                  title="code-map explorer reads / graft calls"
+                >
+                  Code-map
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {specRuns.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={8}
+                    className="py-8 text-center text-muted-foreground"
+                  >
+                    {spec.loading ? "Loading…" : "No spec runs in range."}
+                  </TableCell>
+                </TableRow>
+              )}
+              {[...specRuns].reverse().map((s) => (
+                <TableRow key={s.wf}>
+                  <TableCell className="max-w-72">
+                    <div className="truncate font-medium">
+                      {s.change ?? "(change id not captured)"}
+                    </div>
+                    <div className="font-mono text-xs text-muted-foreground">
+                      {new Date(s.start).toLocaleString()} · {s.wf}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {s.agents}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {s.reads}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {s.graft}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtTok(s.inTok)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtTok(s.outTok)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtDur(s.wallS)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {s.codeMap
+                      ? `${s.codeMap.reads} / ${s.codeMap.graft}`
+                      : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
     </>
   )
 }
